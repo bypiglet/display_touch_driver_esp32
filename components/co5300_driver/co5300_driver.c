@@ -23,9 +23,6 @@ int16_t _max_x = LCD_WIDTH - 1, _max_y = LCD_HEIGHT - 1;
 int16_t     _width;   ///< Display width as modified by current rotation
 int16_t      _height; ///< Display height as modified by current rotation
 
-// uint8_t _buffer[SPI_MAX_PIXELS_AT_ONCE * 2] = {0};
-// uint16_t _buffer16[SPI_MAX_PIXELS_AT_ONCE];
-// uint32_t _buffer32[SPI_MAX_PIXELS_AT_ONCE / 2];
 typedef union
 {
     uint8_t  _buffer[SPI_MAX_PIXELS_AT_ONCE * 2];
@@ -35,20 +32,33 @@ typedef union
 
 PixelTransferBuffer transferBuffer;
 
-void lcd_gpio_init(void)
+esp_err_t  lcd_gpio_init(void)
 {
+
+    const uint64_t pin_mask = (1ULL << LCD_CS) | (1ULL << LCD_RST);
     // 配置 CS 和 RESET 引脚为输出模式
     gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << LCD_CS) | (1ULL << LCD_RST),
+        .intr_type    = GPIO_INTR_DISABLE,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = pin_mask,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_DISABLE
+        .pull_up_en   = GPIO_PULLUP_DISABLE
     };
 
-    gpio_config(&io_conf);
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // 先拉低再拉高，确保上电后 CS/RST 不处于未知状态
+    gpio_set_level(LCD_CS, 0);
+    gpio_set_level(LCD_RST, 0);
+    ets_delay_us(10);
+
     gpio_set_level(LCD_CS, 1);     // 默认不选中
     gpio_set_level(LCD_RST, 1);    // 默认不复位
+
+    return ESP_OK;
 }
 
 
@@ -57,9 +67,15 @@ bool begin()
     lcd_gpio_init();
     gpio_set_level(LCD_CS, 1);    // 默认不复位
 
-    _csPinMask = (1 << LCD_CS); // CS pin mask
+#if (LCD_CS < 32)
+    _csPinMask = (1u << LCD_CS); // GPIO0-31 use OUT registers
     _csPortSet = (PORTreg_t)&GPIO.out_w1ts;
     _csPortClr = (PORTreg_t)&GPIO.out_w1tc;
+#else
+    _csPinMask = (1u << (LCD_CS - 32)); // GPIO32+ use OUT1 registers
+    _csPortSet = (PORTreg_t)&GPIO.out1_w1ts.val;
+    _csPortClr = (PORTreg_t)&GPIO.out1_w1tc.val;
+#endif
 
   spi_bus_config_t buscfg = {
       .mosi_io_num = LCD_SDIO0,
