@@ -69,8 +69,8 @@ void app_main(void)
 {  
     tra_test();
     lvgl_initialization();
-    show_large_text(lv_scr_act());          // 显示文字
-    //lv_demo_benchmark();                    // 初始化 LVGL 示例
+    //show_large_text(lv_scr_act());          // 显示文字
+    lv_demo_benchmark();                    // 初始化 LVGL 示例
     //lv_demo_stress();                       // 初始化 LVGL 压力测试
     
     while(1)

@@ -1,36 +1,48 @@
 #include "co5300_driver.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
+// —— 头部：保留/简化上下文 —— 
 typedef volatile uint32_t* PORTreg_t;
 
-PORTreg_t _csPortSet; ///< PORT register for chip select SET
-PORTreg_t _csPortClr; ///< PORT register for chip select CLEAR
-uint32_t _csPinMask;  ///< Bitmask for chip select
+typedef union {
+    uint8_t  _buffer[SPI_MAX_PIXELS_AT_ONCE * 2];   // 8-bit 视图
+    uint16_t _buffer16[SPI_MAX_PIXELS_AT_ONCE];     // 16-bit 像素视图（RGB565）
+    uint32_t _buffer32[SPI_MAX_PIXELS_AT_ONCE / 2]; // 2 像素拼成 32bit（便于 DMA）
+} PixelTransferBuffer;
 
-spi_device_handle_t _handle;
-spi_transaction_ext_t _spi_tran_ext;
-spi_transaction_t *_spi_tran;
+typedef struct {
+    // CS 端口寄存器与掩码
+    PORTreg_t cs_port_set;
+    PORTreg_t cs_port_clr;
+    uint32_t  cs_pin_mask;
+
+    // SPI
+    spi_device_handle_t   spi;
+    spi_transaction_ext_t tran_ext;   // 复用一个扩展事务
+    spi_transaction_t*    tran_base;  // &tran_ext.base
+
+    // 几何/窗口状态
+    uint8_t  rotation;
+    uint8_t  x_start, y_start;
+    int16_t  cur_x, cur_y;
+    uint16_t cur_w, cur_h;
+    int16_t  max_x, max_y;
+    int16_t  width, height;
+
+    // 传输缓冲
+    PixelTransferBuffer txbuf;
+} co5300_t;
+
+static co5300_t g; // 单实例（后续可做多实例）
+
+//g.max_x = LCD_WIDTH - 1, g.max_y = LCD_HEIGHT - 1;
 
 uint8_t COL_OFFSET1 = 16, ROW_OFFSET1 =0;
 uint8_t COL_OFFSET2 = 1, ROW_OFFSET2 = 1;
-uint8_t _rotation;
 
-uint8_t _xStart, _yStart;
-int16_t _currentX, _currentY;
-uint16_t _currentW, _currentH;
-int16_t _max_x = LCD_WIDTH - 1, _max_y = LCD_HEIGHT - 1;
-int16_t     _width;   ///< Display width as modified by current rotation
-int16_t      _height; ///< Display height as modified by current rotation
 
-typedef union
-{
-    uint8_t  _buffer[SPI_MAX_PIXELS_AT_ONCE * 2];
-    uint16_t _buffer16[SPI_MAX_PIXELS_AT_ONCE];
-    uint32_t _buffer32[SPI_MAX_PIXELS_AT_ONCE / 2];
-} PixelTransferBuffer;
+static inline void cs_low(co5300_t* ctx){ *ctx->cs_port_clr = ctx->cs_pin_mask; }
+static inline void cs_high(co5300_t* ctx){ *ctx->cs_port_set = ctx->cs_pin_mask; }
 
-PixelTransferBuffer transferBuffer;
 
 esp_err_t  lcd_gpio_init(void)
 {
@@ -48,12 +60,7 @@ esp_err_t  lcd_gpio_init(void)
     esp_err_t err = gpio_config(&io_conf);
     if (err != ESP_OK) {
         return err;
-    }
-
-    // 先拉低再拉高，确保上电后 CS/RST 不处于未知状态
-    gpio_set_level(LCD_CS, 0);
-    gpio_set_level(LCD_RST, 0);
-    ets_delay_us(10);
+    }    
 
     gpio_set_level(LCD_CS, 1);     // 默认不选中
     gpio_set_level(LCD_RST, 1);    // 默认不复位
@@ -68,13 +75,13 @@ bool begin()
     gpio_set_level(LCD_CS, 1);    // 默认不复位
 
 #if (LCD_CS < 32)
-    _csPinMask = (1u << LCD_CS); // GPIO0-31 use OUT registers
-    _csPortSet = (PORTreg_t)&GPIO.out_w1ts;
-    _csPortClr = (PORTreg_t)&GPIO.out_w1tc;
+    g.cs_pin_mask = (1u << LCD_CS); // GPIO0-31 use OUT registers
+    g.cs_port_set = (PORTreg_t)&GPIO.out_w1ts;
+    g.cs_port_clr = (PORTreg_t)&GPIO.out_w1tc;
 #else
-    _csPinMask = (1u << (LCD_CS - 32)); // GPIO32+ use OUT1 registers
-    _csPortSet = (PORTreg_t)&GPIO.out1_w1ts.val;
-    _csPortClr = (PORTreg_t)&GPIO.out1_w1tc.val;
+    g.cs_pin_mask = (1u << (LCD_CS - 32)); // GPIO32+ use OUT1 registers
+    g.cs_port_set = (PORTreg_t)&GPIO.out1_w1ts.val;
+    g.cs_port_clr = (PORTreg_t)&GPIO.out1_w1tc.val;
 #endif
 
   spi_bus_config_t buscfg = {
@@ -102,24 +109,26 @@ bool begin()
       .flags = SPI_DEVICE_HALFDUPLEX,
       .queue_size = 1,
   };
-  ret = spi_bus_add_device(QSPI_SPI_HOST, &devcfg, &_handle);
+  ret = spi_bus_add_device(QSPI_SPI_HOST, &devcfg, &g.spi);
   if (ret != ESP_OK)
   {
     ESP_ERROR_CHECK(ret);
     return false;
   }
 
-  spi_device_acquire_bus(_handle, portMAX_DELAY);
-  memset(&_spi_tran_ext, 0, sizeof(_spi_tran_ext));
-  _spi_tran = (spi_transaction_t *)&_spi_tran_ext;
+  spi_device_acquire_bus(g.spi, portMAX_DELAY);
+  memset(&g.tran_ext, 0, sizeof(g.tran_ext));
+  g.tran_base = (spi_transaction_t *)&g.tran_ext;
 
   return true;
 }
+
+
 // 写 MADCTL
 void setMADCTL(uint8_t rotation) {
     uint8_t madctl = 0;
 
-    switch(rotation) {
+    switch(g.rotation) {
         case 0: madctl = 0x00; break; // 竖屏
         case 1: madctl = 0x60; break; // 横屏
         case 2: madctl = 0xC0; break; // 180°竖屏
@@ -130,59 +139,59 @@ void setMADCTL(uint8_t rotation) {
 
 void setRotation(uint8_t r)
 {
-    _rotation = (r & 7);
+    g.rotation = (r & 7);
 
 
-      switch (_rotation)
+      switch (g.rotation)
     {
     case 7:
     case 5:
     case 3:
     case 1:
-        _width = LCD_HEIGHT;
-        _height = LCD_WIDTH;
-        _max_x = _width - 1;  ///< x zero base bound
-        _max_y = _height - 1; ///< y zero base bound
+        g.width = LCD_HEIGHT;
+        g.height = LCD_WIDTH;
+        g.max_x = g.width - 1;  ///< x zero base bound
+        g.max_y = g.height - 1; ///< y zero base bound
         break;
     case 6:
     case 4:
     case 2:
     default: // case 0:
-        _width = LCD_WIDTH;
-        _height = LCD_HEIGHT;
-        _max_x = _width - 1;  ///< x zero base bound
-        _max_y = _height - 1; ///< y zero base bound
+        g.width = LCD_WIDTH;
+        g.height = LCD_HEIGHT;
+        g.max_x = g.width - 1;  ///< x zero base bound
+        g.max_y = g.height - 1; ///< y zero base bound
         break;
     }
 
-    switch (_rotation)
+    switch (g.rotation)
     {
     case 5:
     case 3:
-        _xStart = ROW_OFFSET2;
-        _yStart = COL_OFFSET1;
+        g.x_start = ROW_OFFSET2;
+        g.y_start = COL_OFFSET1;
         break;
     case 6:
     case 2:
-        _xStart = COL_OFFSET2;
-        _yStart = ROW_OFFSET2;
+        g.x_start = COL_OFFSET2;
+        g.y_start = ROW_OFFSET2;
         break;
     case 7:
     case 1:
-        _xStart = ROW_OFFSET1;
-        _yStart = COL_OFFSET2;
+        g.x_start = ROW_OFFSET1;
+        g.y_start = COL_OFFSET2;
         break;
     case 4:
     default: // case 0:
-        _xStart = COL_OFFSET1;
-        _yStart = ROW_OFFSET1;
+        g.x_start = COL_OFFSET1;
+        g.y_start = ROW_OFFSET1;
         break;
     }
-    _currentX = 0xFFFF;
-    _currentY = 0xFFFF;
-    _currentW = 0xFFFF;
-    _currentH = 0xFFFF;
-    setMADCTL(_rotation);
+    g.cur_x = 0xFFFF;
+    g.cur_y = 0xFFFF;
+    g.cur_w = 0xFFFF;
+    g.cur_h = 0xFFFF;
+    setMADCTL(g.rotation);
 }
 
 bool TFT_begin()
@@ -211,28 +220,28 @@ bool TFT_begin()
 
 void beginWrite()
 {
-    CS_LOW();
+    cs_low(&g);
 }
 
 void endWrite()
 {
-    CS_HIGH();
+    cs_high(&g);
 }
 
  void POLL_START()
 {
-  //esp_err_t ret = spi_device_polling_start(_handle, _spi_tran, portMAX_DELAY);
-  esp_err_t ret = spi_device_transmit(_handle, _spi_tran);
-  // if (ret != ESP_OK)
-  // {
-  //   printf("spi_device_polling_start error: %d\n", ret);
-  //   // Consider adding error handling here
-  // }
+  //esp_err_t ret = spi_device_polling_start(g.spi, g.tran_base, portMAX_DELAY);
+  esp_err_t ret = spi_device_polling_transmit(g.spi, g.tran_base);
+  if (ret != ESP_OK)
+  {
+    printf("spi_device_polling_start error: %d\n", ret);
+    // Consider adding error handling here
+  }
 }
 
  void POLL_END()
 {
-   //esp_err_t ret = spi_device_polling_end(_handle, portMAX_DELAY);
+  //esp_err_t ret = spi_device_polling_end(g.spi, portMAX_DELAY);
   // if (ret != ESP_OK)
   // {
   //   printf("spi_device_polling_end error: %d\n", ret);
@@ -241,114 +250,102 @@ void endWrite()
 
 }
 
-
- void CS_HIGH(void)
-{
-  *_csPortSet = _csPinMask;
-}
-
- void CS_LOW(void)
-{
-  *_csPortClr = _csPinMask;
-}
-
-
 void writeCommand16(uint16_t c)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  _spi_tran_ext.base.cmd = SPI_CMD_WRITE;
-  _spi_tran_ext.base.addr = c;
-  _spi_tran_ext.base.tx_buffer = NULL;
-  _spi_tran_ext.base.length = 0;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+  g.tran_ext.base.cmd = SPI_CMD_WRITE;
+  g.tran_ext.base.addr = c;
+  g.tran_ext.base.tx_buffer = NULL;
+  g.tran_ext.base.length = 0;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 
 
 void write16(uint16_t d)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
-  _spi_tran_ext.base.cmd = SPI_CMD_READ;
-  _spi_tran_ext.base.addr = 0x003C00;
-  _spi_tran_ext.base.tx_data[0] = d >> 8;
-  _spi_tran_ext.base.tx_data[1] = d;
-  _spi_tran_ext.base.length = 16;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
+  g.tran_ext.base.cmd = SPI_CMD_READ;
+  g.tran_ext.base.addr = 0x003C00;
+  g.tran_ext.base.tx_data[0] = d >> 8;
+  g.tran_ext.base.tx_data[1] = d;
+  g.tran_ext.base.length = 16;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void my_write(uint8_t d)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
-  _spi_tran_ext.base.cmd = SPI_CMD_READ;
-  _spi_tran_ext.base.addr = 0x003C00;
-  _spi_tran_ext.base.tx_data[0] = d;
-  _spi_tran_ext.base.length = 8;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
+  g.tran_ext.base.cmd = SPI_CMD_READ;
+  g.tran_ext.base.addr = 0x003C00;
+  g.tran_ext.base.tx_data[0] = d;
+  g.tran_ext.base.length = 8;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void writeCommand(uint8_t c)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  _spi_tran_ext.base.cmd = SPI_CMD_WRITE;
-  _spi_tran_ext.base.addr = ((uint32_t)c) << 8;
-  _spi_tran_ext.base.tx_buffer = NULL;
-  _spi_tran_ext.base.length = 0;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+  g.tran_ext.base.cmd = SPI_CMD_WRITE;
+  g.tran_ext.base.addr = ((uint32_t)c) << 8;
+  g.tran_ext.base.tx_buffer = NULL;
+  g.tran_ext.base.length = 0;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void writeC8D8(uint8_t c, uint8_t d)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  _spi_tran_ext.base.cmd = SPI_CMD_WRITE;
-  _spi_tran_ext.base.addr = ((uint32_t)c) << 8;
-  _spi_tran_ext.base.tx_data[0] = d;
-  _spi_tran_ext.base.length = 8;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+  g.tran_ext.base.cmd = SPI_CMD_WRITE;
+  g.tran_ext.base.addr = ((uint32_t)c) << 8;
+  g.tran_ext.base.tx_data[0] = d;
+  g.tran_ext.base.length = 8;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void writeC8D16(uint8_t c, uint16_t d)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  _spi_tran_ext.base.cmd = SPI_CMD_WRITE;
-  _spi_tran_ext.base.addr = ((uint32_t)c) << 8;
-  _spi_tran_ext.base.tx_data[0] = d >> 8;
-  _spi_tran_ext.base.tx_data[1] = d;
-  _spi_tran_ext.base.length = 16;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+  g.tran_ext.base.cmd = SPI_CMD_WRITE;
+  g.tran_ext.base.addr = ((uint32_t)c) << 8;
+  g.tran_ext.base.tx_data[0] = d >> 8;
+  g.tran_ext.base.tx_data[1] = d;
+  g.tran_ext.base.length = 16;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void writeC8D16D16(uint8_t c, uint16_t d1, uint16_t d2)
 {
-  CS_LOW();
-  _spi_tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  _spi_tran_ext.base.cmd = SPI_CMD_WRITE;
-  _spi_tran_ext.base.addr = ((uint32_t)c) << 8;
-  _spi_tran_ext.base.tx_data[0] = d1 >> 8;
-  _spi_tran_ext.base.tx_data[1] = d1;
-  _spi_tran_ext.base.tx_data[2] = d2 >> 8;
-  _spi_tran_ext.base.tx_data[3] = d2;
-  _spi_tran_ext.base.length = 32;
+  cs_low(&g);
+  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+  g.tran_ext.base.cmd = SPI_CMD_WRITE;
+  g.tran_ext.base.addr = ((uint32_t)c) << 8;
+  g.tran_ext.base.tx_data[0] = d1 >> 8;
+  g.tran_ext.base.tx_data[1] = d1;
+  g.tran_ext.base.tx_data[2] = d2 >> 8;
+  g.tran_ext.base.tx_data[3] = d2;
+  g.tran_ext.base.length = 32;
   POLL_START();
   POLL_END();
-  CS_HIGH();
+  cs_high(&g);
 }
 
 
@@ -408,15 +405,15 @@ void batchOperation(const uint8_t *operations, size_t len)
 /* 设置显示区域 */
 void writeAddrWindow(int16_t x, int16_t y, uint16_t w, uint16_t h)
 {
-    if ((x != _currentX) || (w != _currentW) || (y != _currentY) || (h != _currentH))
+    if ((x != g.cur_x) || (w != g.cur_w) || (y != g.cur_y) || (h != g.cur_h))
     {
-        writeC8D16D16(CO5300_W_CASET, x + _xStart, x + w - 1 + _xStart);
-        writeC8D16D16(CO5300_W_PASET, y + _yStart, y + h - 1 + _yStart);
+        writeC8D16D16(CO5300_W_CASET, x + g.x_start, x + w - 1 + g.x_start);
+        writeC8D16D16(CO5300_W_PASET, y + g.y_start, y + h - 1 + g.y_start);
 
-        _currentX = x;
-        _currentY = y;
-        _currentW = w;
-        _currentH = h;
+        g.cur_x = x;
+        g.cur_y = y;
+        g.cur_w = w;
+        g.cur_h = h;
     }
 
     writeCommand(CO5300_W_RAMWR); // write to RAM
@@ -436,10 +433,10 @@ void writeRepeat(uint16_t p, uint32_t len)
   l = (bufLen + 1) / 2;
   for (uint32_t i = 0; i < l; i++)
   {
-    transferBuffer._buffer32[i] = c32;
+    g.txbuf._buffer32[i] = c32;
   }
 
-  CS_LOW();
+  cs_low(&g);
   // Issue pixels in blocks from temp buffer  
   while (len) // While pixels remains
   {
@@ -447,31 +444,31 @@ void writeRepeat(uint16_t p, uint32_t len)
 
     if (first_send)
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO;
-      _spi_tran_ext.base.cmd = 0x32;
-      _spi_tran_ext.base.addr = 0x003C00;
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO;
+      g.tran_ext.base.cmd = 0x32;
+      g.tran_ext.base.addr = 0x003C00;
       first_send = false;
     }
     else
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
                                  SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY;
     }
-    _spi_tran_ext.base.tx_buffer = transferBuffer._buffer16;
-    _spi_tran_ext.base.length = xferLen << 4;
+    g.tran_ext.base.tx_buffer = g.txbuf._buffer16;
+    g.tran_ext.base.length = xferLen << 4;
 
     POLL_START();
     POLL_END();
 
     len -= xferLen;
   }
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void writePixels(uint16_t *data, uint32_t len)
 {
 
-  CS_LOW();
+  cs_low(&g);
   uint32_t l, l2;
   uint16_t p1, p2;
   bool first_send = true;
@@ -481,14 +478,14 @@ void writePixels(uint16_t *data, uint32_t len)
 
     if (first_send)
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO;
-      _spi_tran_ext.base.cmd = 0x32;
-      _spi_tran_ext.base.addr = 0x003C00;
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO;
+      g.tran_ext.base.cmd = 0x32;
+      g.tran_ext.base.addr = 0x003C00;
       first_send = false;
     }
     else
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
                                  SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY;
     }
     l2 = l >> 1;
@@ -496,23 +493,23 @@ void writePixels(uint16_t *data, uint32_t len)
     {
       p1 = *data++;
       p2 = *data++;
-      MSB_32_16_16_SET(transferBuffer._buffer32[i], p1, p2);
+      MSB_32_16_16_SET(g.txbuf._buffer32[i], p1, p2);
     }
     if (l & 1)
     {
       p1 = *data++;
-      MSB_16_SET(transferBuffer._buffer16[l - 1], p1);
+      MSB_16_SET(g.txbuf._buffer16[l - 1], p1);
     }
 
-    _spi_tran_ext.base.tx_buffer = transferBuffer._buffer32;
-    _spi_tran_ext.base.length = l << 4;
+    g.tran_ext.base.tx_buffer = g.txbuf._buffer32;
+    g.tran_ext.base.length = l << 4;
 
     POLL_START();
     POLL_END();
 
     len -= l;
   }
-  CS_HIGH();
+  cs_high(&g);
 }
 
 /*像素点填充*/
@@ -529,7 +526,7 @@ void writeRepeatBuffer(uint16_t *buf, uint32_t len)
 {
     uint32_t maxBlock = SPI_MAX_PIXELS_AT_ONCE;
     uint32_t offset = 0;
-    CS_LOW();
+    cs_low(&g);
 
     while (len)
     {
@@ -540,11 +537,11 @@ void writeRepeatBuffer(uint16_t *buf, uint32_t len)
         {
             uint32_t c32;
             MSB_32_16_16_SET(c32, buf[i], buf[i + 1]);
-            transferBuffer._buffer32[i / 2] = c32;
+            g.txbuf._buffer32[i / 2] = c32;
         }
 
-        _spi_tran_ext.base.tx_buffer = transferBuffer._buffer16;
-        _spi_tran_ext.base.length = block << 4;
+        g.tran_ext.base.tx_buffer = g.txbuf._buffer16;
+        g.tran_ext.base.length = block << 4;
         POLL_START();
         POLL_END();
 
@@ -552,7 +549,7 @@ void writeRepeatBuffer(uint16_t *buf, uint32_t len)
         offset += block;
     }
 
-    CS_HIGH();
+    cs_high(&g);
 }
 // 批量刷新指定矩形区域
 void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p)
@@ -585,7 +582,7 @@ void writeFastHLine(int16_t x, int16_t y,
 {
 for (int16_t i = x; i < x + w; i++)
 {
-    if (_ordered_in_range(x, 0, _max_x) && _ordered_in_range(y, 0, _max_y))
+    if (_ordered_in_range(x, 0, g.max_x) && _ordered_in_range(y, 0, g.max_y))
     {
     writePixelPreclipped(i, y, color);
      }
@@ -596,7 +593,7 @@ for (int16_t i = x; i < x + w; i++)
 void writePixel(int16_t x, int16_t y,uint16_t color)
 {
 
-    if (_ordered_in_range(x, 0, _max_x) && _ordered_in_range(y, 0, _max_y))
+    if (_ordered_in_range(x, 0, g.max_x) && _ordered_in_range(y, 0, g.max_y))
     {
         writePixelPreclipped(x, y, color);
      }
@@ -604,7 +601,7 @@ void writePixel(int16_t x, int16_t y,uint16_t color)
 
 void writeBytes(uint8_t *data, uint32_t len)
 {
-  CS_LOW();
+  cs_low(&g);
   uint32_t l;
   bool first_send = true;
   while (len)
@@ -613,19 +610,19 @@ void writeBytes(uint8_t *data, uint32_t len)
 
     if (first_send)
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO;
-      _spi_tran_ext.base.cmd = 0x32;
-      _spi_tran_ext.base.addr = 0x003C00;
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO;
+      g.tran_ext.base.cmd = 0x32;
+      g.tran_ext.base.addr = 0x003C00;
       first_send = false;
     }
     else
     {
-      _spi_tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
+      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
                                  SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY;
     }
 
-    _spi_tran_ext.base.tx_buffer = data;
-    _spi_tran_ext.base.length = l << 3;
+    g.tran_ext.base.tx_buffer = data;
+    g.tran_ext.base.length = l << 3;
 
     POLL_START();
     POLL_END();
@@ -633,7 +630,7 @@ void writeBytes(uint8_t *data, uint32_t len)
     len -= l;
     data += l;
   }
-  CS_HIGH();
+  cs_high(&g);
 }
 
 void  draw16bitBeRGBBitmap(int16_t x, int16_t y,uint16_t *bitmap,int16_t w,int16_t h)
@@ -651,18 +648,18 @@ void  draw16bitBeRGBBitmap(int16_t x, int16_t y,uint16_t *bitmap,int16_t w,int16
     //         writePixel(x + i, y, p);
     //      }
     //  }
-    CS_LOW();
+    cs_low(&g);
     writeAddrWindow(x, y, w, h);
     writePixels((uint16_t *)bitmap, (uint32_t)w * h);
-    CS_HIGH();
+    cs_high(&g);
 }
 
 /* 设置显示亮度 */
 void Display_Brightness(uint8_t brightness)
 {
-    CS_LOW();
+    cs_low(&g);
     writeC8D8(CO5300_W_WDBRIGHTNESSVALNOR, brightness);
-    CS_HIGH();
+    cs_high(&g);
 }
 
 /* 填充矩形裁剪 */
@@ -681,13 +678,13 @@ void writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
     if (w == 0 || h == 0) return;             // 宽高为0，无需绘制，直接返回
 
     int16_t x2 = x + w - 1, y2 = y + h - 1;  // 计算矩形右下角坐标
-    if (x > _max_x || y > _max_y               // 矩形完全在屏幕外，直接返回
+    if (x > g.max_x || y > g.max_y               // 矩形完全在屏幕外，直接返回
         || x2 < 0 || y2 < 0) return;
 
     if (x < 0) { w += x; x = 0; }             // 裁剪左边界，调整x和宽度
     if (y < 0) { h += y; y = 0; }             // 裁剪上边界，调整y和高度
-    if (x2 > _max_x) w = _max_x - x + 1;      // 裁剪右边界，调整宽度
-    if (y2 > _max_y) h = _max_y - y + 1;      // 裁剪下边界，调整高度
+    if (x2 > g.max_x) w = g.max_x - x + 1;      // 裁剪右边界，调整宽度
+    if (y2 > g.max_y) h = g.max_y - y + 1;      // 裁剪下边界，调整高度
     if (w <= 0 || h <= 0) return;              // 裁剪后宽高无效，直接返回
 
     writeFillRectPreclipped(x, y, w, h, color); // 调用裁剪后绘制函数
@@ -695,26 +692,26 @@ void writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 
 void fillScreen(uint16_t color)
 {
-    fillRect(0, 0, _width, _height, color);
+    fillRect(0, 0, g.width, g.height, color);
 }
 
 //矩形填充
 void fillRect(int16_t x, int16_t y, int16_t w, int16_t h,
                            uint16_t color)
 {
-    CS_LOW();
+    cs_low(&g);
     writeFillRect(x, y, w, h, color);
-    CS_HIGH();
+    cs_high(&g);
 }
 
 
 
 void drawBitmap(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t data)
 {
-    CS_LOW();
+    cs_low(&g);
     writeAddrWindow(x, y, w, h);       // 设置开窗
     writeRepeat(data, w * h * 2); // 一次写入所有像素颜色（2 = 单位像素的字节或像素数，需根据实际调整）
-    CS_HIGH();
+    cs_high(&g);
 }
 
 void tra_test()
