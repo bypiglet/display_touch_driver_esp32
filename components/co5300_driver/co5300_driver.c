@@ -69,7 +69,7 @@ esp_err_t  lcd_gpio_init(void)
 }
 
 
-bool begin()
+bool co5300_spi_init(void)
 {
     lcd_gpio_init();
     gpio_set_level(LCD_CS, 1);    // 默认不复位
@@ -84,43 +84,45 @@ bool begin()
     g.cs_port_clr = (PORTreg_t)&GPIO.out1_w1tc.val;
 #endif
 
-  spi_bus_config_t buscfg = {
-      .mosi_io_num = LCD_SDIO0,
-      .miso_io_num = LCD_SDIO1,
-      .sclk_io_num = LCD_SCLK,
-      .quadwp_io_num = LCD_SDIO2,
-      .quadhd_io_num = LCD_SDIO3,
-      .max_transfer_sz = (SPI_MAX_PIXELS_AT_ONCE * 16) + 8,
-      .flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
-  };
-  esp_err_t ret = spi_bus_initialize(QSPI_SPI_HOST, &buscfg, QSPI_DMA_CHANNEL);
-  if (ret != ESP_OK)
-  {
-    ESP_ERROR_CHECK(ret);
-    return false;
-  }
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = LCD_SDIO0,
+        .miso_io_num = LCD_SDIO1, 
+        .sclk_io_num = LCD_SCLK,
+        .quadwp_io_num = LCD_SDIO2,
+        .quadhd_io_num = LCD_SDIO3,
+        .max_transfer_sz = (SPI_MAX_PIXELS_AT_ONCE * 16) + 8,
+        .flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
+    };
 
-  spi_device_interface_config_t devcfg = {
-      .command_bits = 8,
-      .address_bits = 24,
-      .mode = 0,
-      .clock_speed_hz = QSPI_FREQUENCY,
-      .spics_io_num = -1, // avoid use system CS control
-      .flags = SPI_DEVICE_HALFDUPLEX,
-      .queue_size = 1,
-  };
-  ret = spi_bus_add_device(QSPI_SPI_HOST, &devcfg, &g.spi);
-  if (ret != ESP_OK)
-  {
-    ESP_ERROR_CHECK(ret);
-    return false;
-  }
+    esp_err_t ret = spi_bus_initialize(QSPI_SPI_HOST, &bus_cfg, QSPI_DMA_CHANNEL);
+    if (ret != ESP_OK)
+    {
+        ESP_ERROR_CHECK(ret);
+        return false;
+    }
 
-  spi_device_acquire_bus(g.spi, portMAX_DELAY);
-  memset(&g.tran_ext, 0, sizeof(g.tran_ext));
-  g.tran_base = (spi_transaction_t *)&g.tran_ext;
+    spi_device_interface_config_t devcfg = {
+        .command_bits = 8,
+        .address_bits = 24,
+        .mode = 0,
+        .clock_speed_hz = QSPI_FREQUENCY,
+        .spics_io_num = -1, // avoid use system CS control
+        .flags = SPI_DEVICE_HALFDUPLEX,
+        .queue_size = 1,
+    };
 
-  return true;
+    ret = spi_bus_add_device(QSPI_SPI_HOST, &devcfg, &g.spi);
+    if (ret != ESP_OK)
+    {
+        ESP_ERROR_CHECK(ret);
+        return false;
+    }
+
+    spi_device_acquire_bus(g.spi, portMAX_DELAY);
+    memset(&g.tran_ext, 0, sizeof(g.tran_ext));
+    g.tran_base = (spi_transaction_t *)&g.tran_ext;
+
+    return true;
 }
 
 
@@ -196,7 +198,7 @@ void setRotation(uint8_t r)
 
 bool TFT_begin()
 {
-    if (!begin()) {
+    if (!co5300_spi_init()) {
         return false;
     }
     

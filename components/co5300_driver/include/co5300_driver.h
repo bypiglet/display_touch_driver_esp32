@@ -232,7 +232,9 @@ static const uint8_t co5300_init_operations[] = {
     DELAY, 10};
 
 
-bool begin();
+bool co5300_spi_init();
+
+
 bool TFT_begin();
 void tra_test();
 void writeCommand(uint8_t c);
