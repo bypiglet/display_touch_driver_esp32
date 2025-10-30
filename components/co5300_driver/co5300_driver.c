@@ -85,11 +85,11 @@ bool co5300_spi_init(void)
 #endif
 
     spi_bus_config_t bus_cfg = {
-        .mosi_io_num = LCD_SDIO0,
-        .miso_io_num = LCD_SDIO1, 
-        .sclk_io_num = LCD_SCLK,
-        .quadwp_io_num = LCD_SDIO2,
-        .quadhd_io_num = LCD_SDIO3,
+        .mosi_io_num    = LCD_SDIO0,
+        .miso_io_num    = LCD_SDIO1, 
+        .sclk_io_num    = LCD_SCLK,
+        .quadwp_io_num  = LCD_SDIO2,
+        .quadhd_io_num  = LCD_SDIO3,
         .max_transfer_sz = (SPI_MAX_PIXELS_AT_ONCE * 16) + 8,
         .flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
     };
@@ -125,6 +125,8 @@ bool co5300_spi_init(void)
     return true;
 }
 
+
+/**********旋转调试**********/
 
 // 写 MADCTL
 void setMADCTL(uint8_t rotation) {
@@ -196,7 +198,8 @@ void setRotation(uint8_t r)
     setMADCTL(g.rotation);
 }
 
-bool TFT_begin()
+
+bool co5300_begin()
 {
     if (!co5300_spi_init()) {
         return false;
@@ -220,17 +223,17 @@ bool TFT_begin()
     return true;
 }
 
-void beginWrite()
+static inline void beginWrite()
 {
     cs_low(&g);
 }
 
-void endWrite()
+static inline void endWrite()
 {
     cs_high(&g);
 }
 
- void POLL_START()
+ static void POLL_START()
 {
   //esp_err_t ret = spi_device_polling_start(g.spi, g.tran_base, portMAX_DELAY);
   esp_err_t ret = spi_device_polling_transmit(g.spi, g.tran_base);
@@ -241,7 +244,7 @@ void endWrite()
   }
 }
 
- void POLL_END()
+ static void POLL_END()
 {
   //esp_err_t ret = spi_device_polling_end(g.spi, portMAX_DELAY);
   // if (ret != ESP_OK)
@@ -252,49 +255,51 @@ void endWrite()
 
 }
 
-void writeCommand16(uint16_t c)
-{
-  cs_low(&g);
-  g.tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  g.tran_ext.base.cmd = SPI_CMD_WRITE;
-  g.tran_ext.base.addr = c;
-  g.tran_ext.base.tx_buffer = NULL;
-  g.tran_ext.base.length = 0;
-  POLL_START();
-  POLL_END();
-  cs_high(&g);
-}
+// void writeCommand16(uint16_t c)
+// {
+//   cs_low(&g);
+//   g.tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+//   g.tran_ext.base.cmd = SPI_CMD_WRITE;
+//   g.tran_ext.base.addr = c;
+//   g.tran_ext.base.tx_buffer = NULL;
+//   g.tran_ext.base.length = 0;
+//   POLL_START();
+//   POLL_END();
+//   cs_high(&g);
+// }
 
 
+// void write16(uint16_t d)
+// {
+//   cs_low(&g);
+//   g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
+//   g.tran_ext.base.cmd = SPI_CMD_QUAD_WRITE_PIXEL;
+//   g.tran_ext.base.addr = 0x003C00;
+//   g.tran_ext.base.tx_data[0] = d >> 8;
+//   g.tran_ext.base.tx_data[1] = d;
+//   g.tran_ext.base.length = 16;
+//   POLL_START();
+//   POLL_END();
+//   cs_high(&g);
+// }
 
-void write16(uint16_t d)
+
+//4线写数据8位
+ static void write8(uint8_t d)
 {
   cs_low(&g);
   g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
-  g.tran_ext.base.cmd = SPI_CMD_READ;
-  g.tran_ext.base.addr = 0x003C00;
-  g.tran_ext.base.tx_data[0] = d >> 8;
-  g.tran_ext.base.tx_data[1] = d;
-  g.tran_ext.base.length = 16;
-  POLL_START();
-  POLL_END();
-  cs_high(&g);
-}
-
-void my_write(uint8_t d)
-{
-  cs_low(&g);
-  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MODE_QIO;
-  g.tran_ext.base.cmd = SPI_CMD_READ;
+  g.tran_ext.base.cmd = SPI_CMD_QUAD_WRITE_PIXEL;
   g.tran_ext.base.addr = 0x003C00;
   g.tran_ext.base.tx_data[0] = d;
   g.tran_ext.base.length = 8;
   POLL_START();
   POLL_END();
-  cs_high(&g);
+  cs_high(&g);  
 }
 
-void writeCommand(uint8_t c)
+//单线写数据8位
+static void writeCommand(uint8_t c)
 {
   cs_low(&g);
   g.tran_ext.base.flags = SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
@@ -307,6 +312,7 @@ void writeCommand(uint8_t c)
   cs_high(&g);
 }
 
+//地址可控的写命令+8位数据
 void writeC8D8(uint8_t c, uint8_t d)
 {
   cs_low(&g);
@@ -320,20 +326,22 @@ void writeC8D8(uint8_t c, uint8_t d)
   cs_high(&g);
 }
 
-void writeC8D16(uint8_t c, uint16_t d)
-{
-  cs_low(&g);
-  g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
-  g.tran_ext.base.cmd = SPI_CMD_WRITE;
-  g.tran_ext.base.addr = ((uint32_t)c) << 8;
-  g.tran_ext.base.tx_data[0] = d >> 8;
-  g.tran_ext.base.tx_data[1] = d;
-  g.tran_ext.base.length = 16;
-  POLL_START();
-  POLL_END();
-  cs_high(&g);
-}
+// //地址可控的写命令+16位数据+16位数据
+// void writeC8D16(uint8_t c, uint16_t d)
+// {
+//   cs_low(&g);
+//   g.tran_ext.base.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_MULTILINE_CMD | SPI_TRANS_MULTILINE_ADDR;
+//   g.tran_ext.base.cmd = SPI_CMD_WRITE;
+//   g.tran_ext.base.addr = ((uint32_t)c) << 8;
+//   g.tran_ext.base.tx_data[0] = d >> 8;
+//   g.tran_ext.base.tx_data[1] = d;
+//   g.tran_ext.base.length = 16;
+//   POLL_START();
+//   POLL_END();
+//   cs_high(&g);
+// }
 
+//地址可控的写命令+16位数据+16位数据
 void writeC8D16D16(uint8_t c, uint16_t d1, uint16_t d2)
 {
   cs_low(&g);
@@ -350,59 +358,116 @@ void writeC8D16D16(uint8_t c, uint16_t d1, uint16_t d2)
   cs_high(&g);
 }
 
+// /* 初始批量操作 */
+// void batchOperation(const uint8_t *operations, size_t len)
+// {
+//     for (size_t i = 0; i < len; ++i)
+//     {
+//         uint8_t l = 0;
+//         switch (operations[i])
+//         {
+//         case BEGIN_WRITE:
+//             beginWrite();
+//             break;
+//         case WRITE_C8_D16:
+//             break;
+//         case WRITE_C8_D8:
+//             writeC8D8(operations[i+1], operations[i+2]);
+//             i += 2;
+//             break;
+//         case WRITE_COMMAND_8:
+//             writeCommand(operations[++i]);
+//             break;
+//         case WRITE_C16_D16:
+
+//             break;
+//         case WRITE_COMMAND_16:
+
+//             break;
+//         case WRITE_DATA_8:
+//             l = 1;
+//             break;
+//         case WRITE_DATA_16:
+//             l = 2;
+//             break;
+//         case WRITE_BYTES:
+//             l = operations[++i];
+//             break;
+//         case END_WRITE:
+//             endWrite();
+//             break;
+//         case DELAY:
+//             vTaskDelay(operations[++i]);
+//             break;
+//         default:
+//             printf("Unknown operation id at %d: %d", i, operations[i]);
+//             break;
+//         }
+//         while (l--)
+//         {
+//             my_write(operations[++i]);
+//         }
+//     }
+// }
 
 
-/* 初始批量操作 */
-void batchOperation(const uint8_t *operations, size_t len)
+//批量操作
+void batchOperation(const uint8_t *ops, size_t len)
 {
-    for (size_t i = 0; i < len; ++i)
+    size_t i = 0;
+    while(i < len)
     {
-        uint8_t l = 0;
-        switch (operations[i])
+        uint8_t op = ops[i++];
+        uint8_t data_len = 0;
+        
+        switch(op)
         {
         case BEGIN_WRITE:
             beginWrite();
-            break;
-        case WRITE_C8_D16:
-            break;
-        case WRITE_C8_D8:
-            writeC8D8(operations[i+1], operations[i+2]);
-            i += 2;
-            break;
-        case WRITE_COMMAND_8:
-            writeCommand(operations[++i]);
-            break;
-        case WRITE_C16_D16:
+            continue;
 
-            break;
-        case WRITE_COMMAND_16:
-
-            break;
-        case WRITE_DATA_8:
-            l = 1;
-            break;
-        case WRITE_DATA_16:
-            l = 2;
-            break;
-        case WRITE_BYTES:
-            l = operations[++i];
-            break;
         case END_WRITE:
             endWrite();
-            break;
+            continue;
+
         case DELAY:
-            vTaskDelay(operations[++i]);
+            if (i < len) vTaskDelay(ops[i++]);
+            continue;
+
+        case WRITE_C8_D8:
+            if (i + 2 <= len) writeC8D8(ops[i], ops[i+1]);
+            i += 2;
+            continue;
+
+        case WRITE_COMMAND_8:
+            if (i < len) writeCommand(ops[i++]);
+            continue;
+
+        case WRITE_BYTES: 
+            if (i < len) data_len = ops[i++];
             break;
+
+        case WRITE_DATA_8:
+            data_len = 1;
+            break;
+
+        case WRITE_DATA_16:
+            data_len = 2;
+            break;
+
         default:
-            printf("Unknown operation id at %d: %d", i, operations[i]);
-            break;
+            printf("Unknown op %d at %zu\n", op, i-1);
+            continue;
         }
-        while (l--)
+
+        // 通用数据拷贝
+        while (data_len-- && i < len)
         {
-            my_write(operations[++i]);
+            write8(ops[i++]);
         }
     }
 }
+
 
 /* 设置显示区域 */
 void writeAddrWindow(int16_t x, int16_t y, uint16_t w, uint16_t h)
@@ -524,59 +589,59 @@ void writePixelPreclipped(int16_t x, int16_t y, uint16_t color)
     writeRepeat(color, 4);
 }
 
-void writeRepeatBuffer(uint16_t *buf, uint32_t len)
-{
-    uint32_t maxBlock = SPI_MAX_PIXELS_AT_ONCE;
-    uint32_t offset = 0;
-    cs_low(&g);
+// void writeRepeatBuffer(uint16_t *buf, uint32_t len)
+// {
+//     uint32_t maxBlock = SPI_MAX_PIXELS_AT_ONCE;
+//     uint32_t offset = 0;
+//     cs_low(&g);
 
-    while (len)
-    {
-        uint32_t block = (len > maxBlock) ? maxBlock : len;
+//     while (len)
+//     {
+//         uint32_t block = (len > maxBlock) ? maxBlock : len;
 
-        // 填充 SPI DMA 缓冲区
-        for (uint32_t i = 0; i < block; i += 2)
-        {
-            uint32_t c32;
-            MSB_32_16_16_SET(c32, buf[i], buf[i + 1]);
-            g.txbuf._buffer32[i / 2] = c32;
-        }
+//         // 填充 SPI DMA 缓冲区
+//         for (uint32_t i = 0; i < block; i += 2)
+//         {
+//             uint32_t c32;
+//             MSB_32_16_16_SET(c32, buf[i], buf[i + 1]);
+//             g.txbuf._buffer32[i / 2] = c32;
+//         }
 
-        g.tran_ext.base.tx_buffer = g.txbuf._buffer16;
-        g.tran_ext.base.length = block << 4;
-        POLL_START();
-        POLL_END();
+//         g.tran_ext.base.tx_buffer = g.txbuf._buffer16;
+//         g.tran_ext.base.length = block << 4;
+//         POLL_START();
+//         POLL_END();
 
-        len -= block;
-        offset += block;
-    }
+//         len -= block;
+//         offset += block;
+//     }
 
-    cs_high(&g);
-}
-// 批量刷新指定矩形区域
-void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p)
-{
-    int16_t w = x2 - x1 + 1;
-    int16_t h = y2 - y1 + 1;
+//     cs_high(&g);
+// }
+// // 批量刷新指定矩形区域
+// void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p)
+// {
+//     int16_t w = x2 - x1 + 1;
+//     int16_t h = y2 - y1 + 1;
 
-    // 设置屏幕窗口
-    writeAddrWindow(x1, y1, w, h);
+//     // 设置屏幕窗口
+//     writeAddrWindow(x1, y1, w, h);
 
-    uint32_t totalPixels = w * h;
-    uint32_t maxBlock = SPI_MAX_PIXELS_AT_ONCE;
-    uint32_t offset = 0;
+//     uint32_t totalPixels = w * h;
+//     uint32_t maxBlock = SPI_MAX_PIXELS_AT_ONCE;
+//     uint32_t offset = 0;
 
-    while (totalPixels)
-    {
-        uint32_t block = (totalPixels > maxBlock) ? maxBlock : totalPixels;
+//     while (totalPixels)
+//     {
+//         uint32_t block = (totalPixels > maxBlock) ? maxBlock : totalPixels;
 
-        // LVGL 内存中连续的像素块批量写入
-        writeRepeatBuffer((uint16_t *)(color_p + offset), block);
+//         // LVGL 内存中连续的像素块批量写入
+//         writeRepeatBuffer((uint16_t *)(color_p + offset), block);
 
-        totalPixels -= block;
-        offset += block;
-    }
-}
+//         totalPixels -= block;
+//         offset += block;
+//     }
+// }
 
 /* 水平线绘制 */
 void writeFastHLine(int16_t x, int16_t y,
@@ -591,49 +656,49 @@ for (int16_t i = x; i < x + w; i++)
 }
 }
 
-/* 像素描点 */
-void writePixel(int16_t x, int16_t y,uint16_t color)
-{
+// /* 像素描点 */
+// void writePixel(int16_t x, int16_t y,uint16_t color)
+// {
 
-    if (_ordered_in_range(x, 0, g.max_x) && _ordered_in_range(y, 0, g.max_y))
-    {
-        writePixelPreclipped(x, y, color);
-     }
-}
+//     if (_ordered_in_range(x, 0, g.max_x) && _ordered_in_range(y, 0, g.max_y))
+//     {
+//         writePixelPreclipped(x, y, color);
+//      }
+// }
 
-void writeBytes(uint8_t *data, uint32_t len)
-{
-  cs_low(&g);
-  uint32_t l;
-  bool first_send = true;
-  while (len)
-  {
-    l = (len >= (SPI_MAX_PIXELS_AT_ONCE << 1)) ? (SPI_MAX_PIXELS_AT_ONCE << 1) : len;
+// void writeBytes(uint8_t *data, uint32_t len)
+// {
+//   cs_low(&g);
+//   uint32_t l;
+//   bool first_send = true;
+//   while (len)
+//   {
+//     l = (len >= (SPI_MAX_PIXELS_AT_ONCE << 1)) ? (SPI_MAX_PIXELS_AT_ONCE << 1) : len;
 
-    if (first_send)
-    {
-      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO;
-      g.tran_ext.base.cmd = 0x32;
-      g.tran_ext.base.addr = 0x003C00;
-      first_send = false;
-    }
-    else
-    {
-      g.tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
-                                 SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY;
-    }
+//     if (first_send)
+//     {
+//       g.tran_ext.base.flags = SPI_TRANS_MODE_QIO;
+//       g.tran_ext.base.cmd = 0x32;
+//       g.tran_ext.base.addr = 0x003C00;
+//       first_send = false;
+//     }
+//     else
+//     {
+//       g.tran_ext.base.flags = SPI_TRANS_MODE_QIO | SPI_TRANS_VARIABLE_CMD |
+//                                  SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY;
+//     }
 
-    g.tran_ext.base.tx_buffer = data;
-    g.tran_ext.base.length = l << 3;
+//     g.tran_ext.base.tx_buffer = data;
+//     g.tran_ext.base.length = l << 3;
 
-    POLL_START();
-    POLL_END();
+//     POLL_START();
+//     POLL_END();
 
-    len -= l;
-    data += l;
-  }
-  cs_high(&g);
-}
+//     len -= l;
+//     data += l;
+//   }
+//   cs_high(&g);
+// }
 
 void  draw16bitBeRGBBitmap(int16_t x, int16_t y,uint16_t *bitmap,int16_t w,int16_t h)
 {   
@@ -664,61 +729,41 @@ void Display_Brightness(uint8_t brightness)
     cs_high(&g);
 }
 
-/* 填充矩形裁剪 */
-void writeFillRectPreclipped(int16_t x, int16_t y, int16_t w, int16_t h,
-                                          uint16_t color)
-{
-    writeAddrWindow(x, y, w, h);  // 一次性设置整个区域窗口
-    writeRepeat(color, w * h * 4); // 一次写入所有像素颜色（4 = 单位像素的字节或像素数，需根据实际调整）
-}
+// /* 填充矩形裁剪 */
+// void writeFillRectPreclipped(int16_t x, int16_t y, int16_t w, int16_t h,
+//                                           uint16_t color)
+// {
+//     writeAddrWindow(x, y, w, h);  // 一次性设置整个区域窗口
+//     writeRepeat(color, w * h * 4); // 一次写入所有像素颜色（4 = 单位像素的字节或像素数，需根据实际调整）
+// }
 
-/* 填充矩形 */
-void writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
-{
-    if (w < 0) { x += w + 1; w = -w; }       // 负宽度处理，调整x并取正宽度
-    if (h < 0) { y += h + 1; h = -h; }       // 负高度处理，调整y并取正高度
-    if (w == 0 || h == 0) return;             // 宽高为0，无需绘制，直接返回
+// /* 填充矩形 */
+// void writeFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
+// {
+//     if (w < 0) { x += w + 1; w = -w; }       // 负宽度处理，调整x并取正宽度
+//     if (h < 0) { y += h + 1; h = -h; }       // 负高度处理，调整y并取正高度
+//     if (w == 0 || h == 0) return;             // 宽高为0，无需绘制，直接返回
 
-    int16_t x2 = x + w - 1, y2 = y + h - 1;  // 计算矩形右下角坐标
-    if (x > g.max_x || y > g.max_y               // 矩形完全在屏幕外，直接返回
-        || x2 < 0 || y2 < 0) return;
+//     int16_t x2 = x + w - 1, y2 = y + h - 1;  // 计算矩形右下角坐标
+//     if (x > g.max_x || y > g.max_y               // 矩形完全在屏幕外，直接返回
+//         || x2 < 0 || y2 < 0) return;
 
-    if (x < 0) { w += x; x = 0; }             // 裁剪左边界，调整x和宽度
-    if (y < 0) { h += y; y = 0; }             // 裁剪上边界，调整y和高度
-    if (x2 > g.max_x) w = g.max_x - x + 1;      // 裁剪右边界，调整宽度
-    if (y2 > g.max_y) h = g.max_y - y + 1;      // 裁剪下边界，调整高度
-    if (w <= 0 || h <= 0) return;              // 裁剪后宽高无效，直接返回
+//     if (x < 0) { w += x; x = 0; }             // 裁剪左边界，调整x和宽度
+//     if (y < 0) { h += y; y = 0; }             // 裁剪上边界，调整y和高度
+//     if (x2 > g.max_x) w = g.max_x - x + 1;      // 裁剪右边界，调整宽度
+//     if (y2 > g.max_y) h = g.max_y - y + 1;      // 裁剪下边界，调整高度
+//     if (w <= 0 || h <= 0) return;              // 裁剪后宽高无效，直接返回
 
-    writeFillRectPreclipped(x, y, w, h, color); // 调用裁剪后绘制函数
-}
-
-void fillScreen(uint16_t color)
-{
-    fillRect(0, 0, g.width, g.height, color);
-}
-
-//矩形填充
-void fillRect(int16_t x, int16_t y, int16_t w, int16_t h,
-                           uint16_t color)
-{
-    cs_low(&g);
-    writeFillRect(x, y, w, h, color);
-    cs_high(&g);
-}
+//     writeFillRectPreclipped(x, y, w, h, color); // 调用裁剪后绘制函数
+// }
 
 
 
-void drawBitmap(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t data)
-{
-    cs_low(&g);
-    writeAddrWindow(x, y, w, h);       // 设置开窗
-    writeRepeat(data, w * h * 2); // 一次写入所有像素颜色（2 = 单位像素的字节或像素数，需根据实际调整）
-    cs_high(&g);
-}
+
 
 void tra_test()
 {   
-    if (!TFT_begin()) {
+    if (!co5300_begin()) {
         printf("TFT initialization failed\n");
         return;
     }

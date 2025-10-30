@@ -43,7 +43,10 @@
 
 // SPI command constants
 #define SPI_CMD_WRITE 0x02
-#define SPI_CMD_READ  0x32
+#define SPI_CMD_READ  0x03  
+
+#define SPI_CMD_QUAD_WRITE_PIXEL   0x32 //4-wire pixel write (address: 24clk) 
+
 
 // Range checking macro
 #define _ordered_in_range(val, min, max) ((val) >= (min) && (val) <= (max))
@@ -232,38 +235,32 @@ static const uint8_t co5300_init_operations[] = {
     DELAY, 10};
 
 
-bool co5300_spi_init();
-
-
-bool TFT_begin();
 void tra_test();
-void writeCommand(uint8_t c);
+
+bool co5300_spi_init();
+bool co5300_begin();
+void batchOperation(const uint8_t *operations, size_t len);
 void writeC8D8(uint8_t c, uint8_t d);
-void POLL_START();
-void POLL_END();
 void CS_HIGH(void);
 void CS_LOW(void);
-void beginWrite();
-void endWrite();
+
 
 void writeAddrWindow(int16_t x, int16_t y, uint16_t w, uint16_t h);
 void writePixelPreclipped(int16_t x, int16_t y, uint16_t zcolor);
 void draw16bitBeRGBBitmap(int16_t x, int16_t y,uint16_t *bitmap,int16_t w,int16_t h);
 void writeFastHLine(int16_t x, int16_t y,int16_t w, uint16_t color);
-void batchOperation(const uint8_t *operations, size_t len);
-void fillRect(int16_t x, int16_t y, int16_t w, int16_t h,
-                                uint16_t color);
-void fillScreen(uint16_t color);
-void drawBitmap(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t data);
+
+
 void Display_Brightness(uint8_t brightness);
 void writePixels(uint16_t *data, uint32_t len);
-void writePixel(int16_t x, int16_t y, uint16_t color);
-void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p);
 
-// Global variables declaration
-extern uint8_t _xStart, _yStart;
-extern int16_t _currentX, _currentY;
-extern uint16_t _currentW, _currentH;
-extern int16_t _max_x, _max_y;
+//void writePixel(int16_t x, int16_t y, uint16_t color);
+//void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p);
+
+// // Global variables declaration
+// extern uint8_t _xStart, _yStart;
+// extern int16_t _currentX, _currentY;
+// extern uint16_t _currentW, _currentH;
+// extern int16_t _max_x, _max_y;
 
 #endif // CO5300_DRIVER_H
