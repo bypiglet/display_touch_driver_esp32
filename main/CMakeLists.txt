@@ -2,6 +2,7 @@ set(src_dirs
     .
     ${CMAKE_SOURCE_DIR}/components/lvgl/demos/benchmark  # 添加 demo 源文件路径
     ${CMAKE_SOURCE_DIR}/components/lvgl/demos/benchmark/assets  # 添加 demo 头文件路径
+    ${CMAKE_SOURCE_DIR}/components/lvgl/demos/widgets  # 添加 demo 头文件路径
 )
 
 set(include_dirs
@@ -9,6 +10,7 @@ set(include_dirs
     ${CMAKE_SOURCE_DIR}/components/lvgl
     ${CMAKE_SOURCE_DIR}/components/lvgl/demos/benchmark  # 添加 demo 头文件路径
     ${CMAKE_SOURCE_DIR}/components/lvgl/demos/benchmark/assets  # 添加 demo 头文件路径
+    ${CMAKE_SOURCE_DIR}/components/lvgl/demos/widgets  # 添加 demo 头文件路径
 )
 
 set(priv_requires
@@ -16,6 +18,7 @@ set(priv_requires
     esp_timer
     esp_driver_ledc
     co5300_driver
+    CST820
     lvgl
 )
 

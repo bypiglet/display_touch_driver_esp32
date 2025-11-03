@@ -6,6 +6,7 @@
 #include "lvgl.h"          
 #include "lv_port/lv_port_disp.h"  
 #include "lv_demo_benchmark.h"
+#include "lv_demo_widgets.h"
 #include "lv_conf.h"
 #include <math.h>
 
@@ -39,15 +40,30 @@ void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_ma
 }
 
 
+void my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
+{
+    if(cst820_read_touch(data)) {
+        data->point.x = touchpad_x;
+        data->point.y = touchpad_y;
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+    return false; 
+}
+
 void lvgl_initialization(void)
 {   
     lv_init();
     lv_tick_set_cb(my_tick_get_cb);
     lv_display_t * display1 = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
-
     lv_display_set_buffers(display1, buf1, NULL, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display1, my_flush_cb);
 
+    cst820_init();                     /* 初始化触摸屏驱动 */
+    lv_indev_t * indev = lv_indev_create();        /* Create input device */
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);   /* Set the device type */
+    lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
 }
 
 void show_large_text(lv_obj_t *scr) {
@@ -70,8 +86,8 @@ void app_main(void)
     tra_test();
     lvgl_initialization();
     //show_large_text(lv_scr_act());          // 显示文字
-    lv_demo_benchmark();                    // 初始化 LVGL 示例
-    //lv_demo_stress();                       // 初始化 LVGL 压力测试
+    //lv_demo_benchmark();                    // 初始化 LVGL 示例
+    lv_demo_widgets();
     
     while(1)
     {

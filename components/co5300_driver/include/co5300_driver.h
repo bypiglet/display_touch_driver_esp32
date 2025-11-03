@@ -17,6 +17,7 @@
 #define LCD_WIDTH  368
 #define LCD_HEIGHT 448
 
+
 #define SPI_MAX_PIXELS_AT_ONCE 1024
 #define QSPI_FREQUENCY 40000000
 #define QSPI_SPI_MODE 0
@@ -249,13 +250,10 @@ void writeAddrWindow(int16_t x, int16_t y, uint16_t w, uint16_t h);
 void writePixelPreclipped(int16_t x, int16_t y, uint16_t zcolor);
 void draw16bitBeRGBBitmap(int16_t x, int16_t y,uint16_t *bitmap,int16_t w,int16_t h);
 void writeFastHLine(int16_t x, int16_t y,int16_t w, uint16_t color);
-
+void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 
 void Display_Brightness(uint8_t brightness);
 void writePixels(uint16_t *data, uint32_t len);
-
-//void writePixel(int16_t x, int16_t y, uint16_t color);
-//void flushArea(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t  *color_p);
 
 // // Global variables declaration
 // extern uint8_t _xStart, _yStart;
