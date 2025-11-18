@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "co5300_driver.h"
+#include "CST820.h"
 #include "esp_timer.h"
 #include "lvgl.h"          
 #include "lv_port/lv_port_disp.h"  
@@ -40,11 +41,12 @@ void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_ma
 }
 
 
-void my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
+lv_indev_read_cb_t my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
 {
-    if(cst820_read_touch(data)) {
-        data->point.x = touchpad_x;
-        data->point.y = touchpad_y;
+    cst820_info_t touchpad_data;
+    if(cst820_read_touch(&touchpad_data)) {
+        data->point.x = touchpad_data.x;
+        data->point.y = touchpad_data.y;
         data->state = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
@@ -60,10 +62,10 @@ void lvgl_initialization(void)
     lv_display_set_buffers(display1, buf1, NULL, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display1, my_flush_cb);
 
-    cst820_init();                     /* 初始化触摸屏驱动 */
+    //cst820_init();                     /* 初始化触摸屏驱动 */
     lv_indev_t * indev = lv_indev_create();        /* Create input device */
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);   /* Set the device type */
-    lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
+    //lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
 }
 
 void show_large_text(lv_obj_t *scr) {
