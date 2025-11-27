@@ -1,0 +1,31 @@
+| 寄存器地址 | 寄存器值 | 说明                                                         |
+| ---------- | -------- | ------------------------------------------------------------ |
+| 0x01       | 0x00     | 手势ID寄存器 (Gesture ID Register)                           |
+| 0x02       | 0x00     | 手指数量寄存器 (Finger Number Register)                      |
+| 0x03       | 0x00     | X坐标高4位寄存器 (X Position High 4 Bits Register)            |
+| 0x04       | 0x00     | X坐标低8位寄存器 (X Position Low 8 Bits Register)             |
+| 0x05       | 0x00     | Y坐标高4位寄存器 (Y Position High 4 Bits Register)            |
+| 0x06       | 0x00     | Y坐标低8位寄存器 (Y Position Low 8 Bits Register)             |
+| 0xB0       | 0x01     | 压力通道0高8位寄存器 (BPC0 High 8 Bits Register)              |
+| 0xB1       | 0x52     | 压力通道0低8位寄存器 (BPC0 Low 8 Bits Register)               |
+| 0xB2       | 0x01     | 压力通道1高8位寄存器 (BPC1 High 8 Bits Register)              |
+| 0xB3       | 0x52     | 压力通道1低8位寄存器 (BPC1 Low 8 Bits Register)               |
+| 0xA7       | 0xB7     | 芯片ID寄存器 (Chip ID Register)                               |
+| 0xA8       | 0x65     | 工程编号寄存器 (Project ID Register)                          |
+| 0xA9       | 0x01     | 固件版本寄存器 (Firmware Version Register)                    |
+| 0xEC       | 0x00     | 手势功能掩码寄存器 (Motion Mask Register)                     |
+| 0xED       | 0x01     | 中断脉冲宽度寄存器 (Interrupt Pulse Width Register)           |
+| 0xEE       | 0x00     | 正常扫描周期寄存器 (Normal Scan Period Register)              |
+| 0xEF       | 0x00     | 滑动角度控制寄存器 (Motion Sliding Angle Register)            |
+| 0xF0       | 0x00     | 低功耗扫描1号通道基准值高8位 (Low Power Scan Channel 1 High 8 Bits Register) |
+| 0xF1       | 0x00     | 低功耗扫描1号通道基准值低8位 (Low Power Scan Channel 1 Low 8 Bits Register) |
+| 0xF2       | 0x00     | 低功耗扫描2号通道基准值高8位 (Low Power Scan Channel 2 High 8 Bits Register) |
+| 0xF3       | 0x00     | 低功耗扫描2号通道基准值低8位 (Low Power Scan Channel 2 Low 8 Bits Register) |
+| 0xF4       | 0x00     | 低功耗自动唤醒周期寄存器 (Low Power Auto Wake Time Register) |
+| 0xF5       | 0x00     | 低功耗扫描唤醒门限寄存器 (Low Power Scan Wake Threshold Register) |
+| 0xF6       | 0x00     | 低功耗扫描量程寄存器 (Low Power Scan Range Register)         |
+| 0xF7       | 0x00     | 低功耗扫描频率寄存器 (Low Power Scan Frequency Register)      |
+| 0xF8       | 0x00     | 低功耗扫描电流寄存器 (Low Power Scan Current Register)       |
+| 0xF9       | 0x00     | 自动休眠时间寄存器 (Auto Sleep Time Register)                |
+| 0xFA       | 0x60     | 中断控制寄存器 (Interrupt Control Register)                  |
+| 0xFB       | 0x00     | 防抖时间寄存器 (Debounce Time Register)                      |
