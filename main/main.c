@@ -41,17 +41,17 @@ void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_ma
 }
 
 
-lv_indev_read_cb_t my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
+void  my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
 {
     cst820_info_t touchpad_data;
     if(cst820_read_touch(&touchpad_data)) {
-        data->point.x = touchpad_data.x;
-        data->point.y = touchpad_data.y;
+        data->point.x = touchpad_data.Xpos;
+        data->point.y = touchpad_data.Ypos;
         data->state = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
-    return false; 
+    //return false; 
 }
 
 void lvgl_initialization(void)
@@ -65,7 +65,7 @@ void lvgl_initialization(void)
     //cst820_init();                     /* 初始化触摸屏驱动 */
     lv_indev_t * indev = lv_indev_create();        /* Create input device */
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);   /* Set the device type */
-    //lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
+    lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
 }
 
 void show_large_text(lv_obj_t *scr) {
@@ -90,7 +90,7 @@ void app_main(void)
     //show_large_text(lv_scr_act());          // 显示文字
     //lv_demo_benchmark();                    // 初始化 LVGL 示例
     lv_demo_widgets();
-    
+    //read_allreg();
     while(1)
     {
         lv_task_handler();  // LVGL 任务管理
