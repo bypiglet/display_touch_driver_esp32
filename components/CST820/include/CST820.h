@@ -224,7 +224,7 @@ typedef enum {
 #define IIC_SDA 8 //7
 #define IIC_SCL 7   //6
 
-#define I2C_SPEED 100000 // 100 kHz
+#define I2C_SPEED 50000 // 100 kHz
 #define I2C_ADDR 0x15 
 
 typedef struct CST820
@@ -240,6 +240,8 @@ typedef struct CST820
 
 bool cst820_read_touch(cst820_info_t *info);
 
-bool cst820_init(void);
-uint8_t* cst820_read_byte(uint8_t reg, uint8_t *data_rd);
+void cst820_init(void);
+esp_err_t cst820_read_byte(uint8_t reg, uint8_t *data_rd);
+esp_err_t cst820_read_bytes(uint8_t reg, uint8_t *data_rd, size_t len);
+bool my_touchpad_is_pressed(void* arg);
 void read_allreg();

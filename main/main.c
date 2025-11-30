@@ -10,15 +10,18 @@
 #include "lv_demo_widgets.h"
 #include "lv_conf.h"
 #include <math.h>
+#include "driver/gpio.h"
 
 #define BYTES_PER_PIXEL (LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565_SWAPPED))
 
 static uint8_t buf1[LCD_WIDTH * LCD_HEIGHT  * BYTES_PER_PIXEL /10];
 
+
+lv_timer_t * volatile indev_timer;
+
 static uint32_t my_tick_get_cb(void) {
     return esp_timer_get_time() / 1000;  // 将微秒转换为毫秒
 }
-
 
 void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map)
 {
@@ -41,17 +44,21 @@ void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_ma
 }
 
 
-void  my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
+void my_input_read(lv_indev_t * indev, lv_indev_data_t * data)
 {
     cst820_info_t touchpad_data;
-    if(cst820_read_touch(&touchpad_data)) {
+    if(my_touchpad_is_pressed(NULL))
+    {   
+        cst820_read_touch(&touchpad_data);
         data->point.x = touchpad_data.Xpos;
         data->point.y = touchpad_data.Ypos;
         data->state = LV_INDEV_STATE_PRESSED;
-    } else {
+        printf("Touch detected\r\n");
+    }
+    else 
+    {
         data->state = LV_INDEV_STATE_RELEASED;
     }
-    //return false; 
 }
 
 void lvgl_initialization(void)
@@ -62,10 +69,12 @@ void lvgl_initialization(void)
     lv_display_set_buffers(display1, buf1, NULL, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display1, my_flush_cb);
 
-    //cst820_init();                     /* 初始化触摸屏驱动 */
+    cst820_init();                     /* 初始化触摸屏驱动 */
     lv_indev_t * indev = lv_indev_create();        /* Create input device */
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);   /* Set the device type */
     lv_indev_set_read_cb(indev, my_input_read);    /* Set the read callback */
+    
+    lv_indev_get_read_timer (indev);
 }
 
 void show_large_text(lv_obj_t *scr) {
@@ -91,6 +100,7 @@ void app_main(void)
     //lv_demo_benchmark();                    // 初始化 LVGL 示例
     lv_demo_widgets();
     //read_allreg();
+    vTaskDelay(pdMS_TO_TICKS(500));//等待500ms让触摸屏初始化完成
     while(1)
     {
         lv_task_handler();  // LVGL 任务管理
